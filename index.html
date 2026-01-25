@@ -641,6 +641,7 @@
       <button id="previewBtn" disabled>プレビュー再生</button>
       <button id="stopBtn" class="secondary" disabled>停止</button>
       <button id="exportBtn" disabled>WAVで書き出し</button>
+      <button id="exportMp3Btn" disabled>MP3で書き出し</button>
     </div>
 
     <div class="progress-bar" id="progressBar">
@@ -650,6 +651,7 @@
     <div class="status" id="status"></div>
   </div>
 
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/lamejs/1.2.0/lame.min.js"></script>
   <script>
     // 設定
     const CONFIG = {
@@ -720,6 +722,7 @@
     const previewBtn = document.getElementById('previewBtn');
     const stopBtn = document.getElementById('stopBtn');
     const exportBtn = document.getElementById('exportBtn');
+    const exportMp3Btn = document.getElementById('exportMp3Btn');
     const statusDiv = document.getElementById('status');
     const progressBar = document.getElementById('progressBar');
     const progressFill = document.getElementById('progressFill');
@@ -782,6 +785,15 @@
 
     function hideStatus() {
       statusDiv.className = 'status';
+    }
+
+    function downloadBlob(blob, filename) {
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      a.click();
+      URL.revokeObjectURL(url);
     }
 
     // ファイルアップロード処理
@@ -1069,6 +1081,7 @@
       stopTrimmedBtn.disabled = !isTrimPlaying;
       previewBtn.disabled = !ready;
       exportBtn.disabled = !ready;
+      exportMp3Btn.disabled = !ready;
       stopBtn.disabled = !isPlaying;
       previewSeek.disabled = !ready;
     }
@@ -1285,6 +1298,52 @@
       }
 
       return trimmedBuffer;
+    }
+
+    async function renderMixBuffer() {
+      if (!voiceBuffer || !bgmBuffer) return null;
+
+      const trimmedVoice = getTrimmedVoice();
+      const voiceDuration = trimmedVoice.duration;
+
+      const voiceStart = CONFIG.fadeInDuration + CONFIG.introDelay;
+      const voiceEnd = voiceStart + voiceDuration;
+      const totalDuration = voiceEnd + CONFIG.outroDelay + CONFIG.fadeOutDuration;
+
+      const sampleRate = voiceBuffer.sampleRate;
+      const numChannels = 2;
+      const totalSamples = Math.ceil(totalDuration * sampleRate);
+
+      const offlineCtx = new OfflineAudioContext(numChannels, totalSamples, sampleRate);
+
+      const bgmLoopCount = Math.ceil(totalDuration / bgmBuffer.duration) + 1;
+
+      const bgmGain = offlineCtx.createGain();
+      bgmGain.connect(offlineCtx.destination);
+
+      bgmGain.gain.setValueAtTime(0, 0);
+      bgmGain.gain.linearRampToValueAtTime(1, CONFIG.fadeInDuration);
+      bgmGain.gain.setValueAtTime(1, voiceStart - CONFIG.duckingTransition);
+      bgmGain.gain.linearRampToValueAtTime(CONFIG.duckingLevel, voiceStart);
+      bgmGain.gain.setValueAtTime(CONFIG.duckingLevel, voiceEnd);
+      bgmGain.gain.linearRampToValueAtTime(1, voiceEnd + CONFIG.duckingTransition);
+      const fadeOutStart = voiceEnd + CONFIG.outroDelay;
+      bgmGain.gain.setValueAtTime(1, fadeOutStart);
+      bgmGain.gain.linearRampToValueAtTime(0, totalDuration);
+
+      for (let i = 0; i < bgmLoopCount; i++) {
+        const bgmSource = offlineCtx.createBufferSource();
+        bgmSource.buffer = bgmBuffer;
+        bgmSource.connect(bgmGain);
+        bgmSource.start(i * bgmBuffer.duration);
+      }
+
+      const voiceSource = offlineCtx.createBufferSource();
+      voiceSource.buffer = trimmedVoice;
+      voiceSource.connect(offlineCtx.destination);
+      voiceSource.start(voiceStart);
+
+      return await offlineCtx.startRendering();
     }
 
     // 合成波形を描画
@@ -1597,76 +1656,15 @@
       progressFill.style.width = '0%';
 
       try {
-        const trimmedVoice = getTrimmedVoice();
-        const voiceDuration = trimmedVoice.duration;
-
-        // タイムライン計算
-        const voiceStart = CONFIG.fadeInDuration + CONFIG.introDelay;
-        const voiceEnd = voiceStart + voiceDuration;
-        const totalDuration = voiceEnd + CONFIG.outroDelay + CONFIG.fadeOutDuration;
-
-        const sampleRate = voiceBuffer.sampleRate;
-        const numChannels = 2; // ステレオ出力
-        const totalSamples = Math.ceil(totalDuration * sampleRate);
-
-        // オフラインレンダリング
-        const offlineCtx = new OfflineAudioContext(numChannels, totalSamples, sampleRate);
-
-        // BGMの必要なループ回数
-        const bgmLoopCount = Math.ceil(totalDuration / bgmBuffer.duration) + 1;
-
-        // BGMゲイン設定
-        const bgmGain = offlineCtx.createGain();
-        bgmGain.connect(offlineCtx.destination);
-
-        // フェードイン
-        bgmGain.gain.setValueAtTime(0, 0);
-        bgmGain.gain.linearRampToValueAtTime(1, CONFIG.fadeInDuration);
-
-        // ダッキング
-        bgmGain.gain.setValueAtTime(1, voiceStart - CONFIG.duckingTransition);
-        bgmGain.gain.linearRampToValueAtTime(CONFIG.duckingLevel, voiceStart);
-        bgmGain.gain.setValueAtTime(CONFIG.duckingLevel, voiceEnd);
-        bgmGain.gain.linearRampToValueAtTime(1, voiceEnd + CONFIG.duckingTransition);
-
-        // フェードアウト
-        const fadeOutStart = voiceEnd + CONFIG.outroDelay;
-        bgmGain.gain.setValueAtTime(1, fadeOutStart);
-        bgmGain.gain.linearRampToValueAtTime(0, totalDuration);
-
-        // BGMソース
-        for (let i = 0; i < bgmLoopCount; i++) {
-          const bgmSource = offlineCtx.createBufferSource();
-          bgmSource.buffer = bgmBuffer;
-          bgmSource.connect(bgmGain);
-          bgmSource.start(i * bgmBuffer.duration);
-        }
-
-        // 会話ソース
-        const voiceSource = offlineCtx.createBufferSource();
-        voiceSource.buffer = trimmedVoice;
-        voiceSource.connect(offlineCtx.destination);
-        voiceSource.start(voiceStart);
-
         progressFill.style.width = '30%';
-
-        // レンダリング
-        const renderedBuffer = await offlineCtx.startRendering();
+        const renderedBuffer = await renderMixBuffer();
+        if (!renderedBuffer) throw new Error('レンダリングに失敗しました');
 
         progressFill.style.width = '60%';
-
-        // WAVエンコード
         const wavBlob = encodeWAV(renderedBuffer);
 
         progressFill.style.width = '90%';
-
-        // ダウンロード
-        const url = URL.createObjectURL(wavBlob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = 'podcast_output.wav';
-        a.click();
-        URL.revokeObjectURL(url);
+        downloadBlob(wavBlob, 'podcast_output.wav');
 
         progressFill.style.width = '100%';
         showStatus('WAVファイルを保存しました', 'success');
@@ -1675,7 +1673,41 @@
           progressBar.classList.remove('visible');
           hideStatus();
         }, 3000);
+      } catch (error) {
+        showStatus('書き出しに失敗しました: ' + error.message, 'error');
+        progressBar.classList.remove('visible');
+      }
+    });
 
+    exportMp3Btn.addEventListener('click', async () => {
+      if (!voiceBuffer || !bgmBuffer) return;
+      if (!window.lamejs || !window.lamejs.Mp3Encoder) {
+        showStatus('MP3エンコーダを読み込めませんでした', 'error');
+        return;
+      }
+
+      showStatus('MP3ファイルを生成中...', 'processing');
+      progressBar.classList.add('visible');
+      progressFill.style.width = '0%';
+
+      try {
+        progressFill.style.width = '25%';
+        const renderedBuffer = await renderMixBuffer();
+        if (!renderedBuffer) throw new Error('レンダリングに失敗しました');
+
+        progressFill.style.width = '65%';
+        const mp3Blob = encodeMP3(renderedBuffer);
+
+        progressFill.style.width = '90%';
+        downloadBlob(mp3Blob, 'podcast_output.mp3');
+
+        progressFill.style.width = '100%';
+        showStatus('MP3ファイルを保存しました', 'success');
+
+        setTimeout(() => {
+          progressBar.classList.remove('visible');
+          hideStatus();
+        }, 3000);
       } catch (error) {
         showStatus('書き出しに失敗しました: ' + error.message, 'error');
         progressBar.classList.remove('visible');
@@ -1729,6 +1761,43 @@
       }
 
       return new Blob([buffer], { type: 'audio/wav' });
+    }
+
+    function floatTo16BitPCM(float32Array) {
+      const output = new Int16Array(float32Array.length);
+      for (let i = 0; i < float32Array.length; i++) {
+        const sample = Math.max(-1, Math.min(1, float32Array[i]));
+        output[i] = sample < 0 ? sample * 0x8000 : sample * 0x7FFF;
+      }
+      return output;
+    }
+
+    function encodeMP3(audioBuffer, bitrate = 128) {
+      const numChannels = audioBuffer.numberOfChannels;
+      const sampleRate = audioBuffer.sampleRate;
+      const mp3encoder = new lamejs.Mp3Encoder(numChannels, sampleRate, bitrate);
+      const blockSize = 1152;
+      const mp3Data = [];
+
+      const left = audioBuffer.getChannelData(0);
+      const right = numChannels > 1 ? audioBuffer.getChannelData(1) : null;
+
+      for (let i = 0; i < audioBuffer.length; i += blockSize) {
+        const leftChunk = floatTo16BitPCM(left.subarray(i, i + blockSize));
+        let mp3buf;
+        if (numChannels > 1) {
+          const rightChunk = floatTo16BitPCM(right.subarray(i, i + blockSize));
+          mp3buf = mp3encoder.encodeBuffer(leftChunk, rightChunk);
+        } else {
+          mp3buf = mp3encoder.encodeBuffer(leftChunk);
+        }
+        if (mp3buf.length > 0) mp3Data.push(mp3buf);
+      }
+
+      const end = mp3encoder.flush();
+      if (end.length > 0) mp3Data.push(end);
+
+      return new Blob(mp3Data, { type: 'audio/mpeg' });
     }
 
     function writeString(view, offset, string) {
