@@ -242,10 +242,11 @@
       position: absolute;
       top: 0;
       bottom: 0;
-      width: 2px;
-      background: #fff;
-      pointer-events: none;
-      z-index: 15;
+      width: 16px;
+      margin-left: -8px;
+      cursor: ew-resize;
+      pointer-events: auto;
+      z-index: 25;
       display: none;
     }
 
@@ -259,9 +260,20 @@
       top: 0;
       left: 50%;
       transform: translateX(-50%);
-      border-left: 6px solid transparent;
-      border-right: 6px solid transparent;
-      border-top: 8px solid #fff;
+      border-left: 8px solid transparent;
+      border-right: 8px solid transparent;
+      border-top: 10px solid #fff;
+    }
+
+    .playhead::after {
+      content: '';
+      position: absolute;
+      top: 10px;
+      bottom: 0;
+      left: 50%;
+      width: 2px;
+      transform: translateX(-50%);
+      background: #fff;
     }
 
     .seek-overlay {
@@ -272,6 +284,7 @@
       bottom: 0;
       cursor: pointer;
       z-index: 5;
+      pointer-events: auto;
     }
 
     .current-time-display {
@@ -470,7 +483,7 @@
           <button class="secondary" id="playTrimmed">再生</button>
           <button class="secondary" id="stopTrimmed" disabled>停止</button>
         </div>
-        <div class="trim-hint">ハンドルをドラッグしてトリミング範囲を調整 / 波形クリックでその位置から再生 / Shift+クリックでハンドル移動</div>
+        <div class="trim-hint">緑・赤ハンドルでトリミング範囲調整 / 波形クリックで再生 / 白ヘッドをドラッグでシーク</div>
       </div>
     </div>
   </div>
@@ -959,12 +972,56 @@
       };
     }
 
+    // プレイヘッドのドラッグ処理
+    let isDraggingPlayhead = false;
+
+    playhead.addEventListener('mousedown', (e) => {
+      if (!voiceBuffer) return;
+      e.preventDefault();
+      e.stopPropagation();
+      isDraggingPlayhead = true;
+      document.addEventListener('mousemove', onPlayheadMove);
+      document.addEventListener('mouseup', onPlayheadUp);
+    });
+
+    function onPlayheadMove(e) {
+      if (!isDraggingPlayhead || !voiceBuffer) return;
+      const rect = waveformWrapper.getBoundingClientRect();
+      const x = e.clientX - rect.left;
+      const ratio = Math.max(0, Math.min(1, x / rect.width));
+
+      // トリミング範囲内にクランプ
+      const clampedRatio = Math.max(trimStart, Math.min(trimEnd, ratio));
+
+      // プレイヘッド位置を更新
+      const width = waveformWrapper.clientWidth;
+      playhead.style.left = (clampedRatio * width) + 'px';
+
+      // 現在時間表示を更新
+      const currentPos = clampedRatio * voiceBuffer.duration;
+      currentTimeDisplay.textContent = formatTime(currentPos);
+      currentTimeDisplay.classList.add('visible');
+    }
+
+    function onPlayheadUp(e) {
+      if (!isDraggingPlayhead) return;
+      isDraggingPlayhead = false;
+      document.removeEventListener('mousemove', onPlayheadMove);
+      document.removeEventListener('mouseup', onPlayheadUp);
+
+      // ドラッグ終了位置から再生開始
+      const rect = waveformWrapper.getBoundingClientRect();
+      const x = e.clientX - rect.left;
+      const ratio = Math.max(0, Math.min(1, x / rect.width));
+      playFromPosition(ratio);
+    }
+
     // シークオーバーレイのクリック処理
     seekOverlay.addEventListener('click', (e) => {
       if (!voiceBuffer) return;
 
-      // ハンドルドラッグ中は無視
-      if (draggingHandle) return;
+      // ハンドルドラッグ中やプレイヘッドドラッグ中は無視
+      if (draggingHandle || isDraggingPlayhead) return;
 
       const rect = waveformWrapper.getBoundingClientRect();
       const x = e.clientX - rect.left;
