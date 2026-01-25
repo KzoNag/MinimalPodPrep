@@ -497,6 +497,14 @@
       <input type="file" id="bgmFile" accept="audio/*">
       <div class="file-name" id="bgmFileName"></div>
     </div>
+
+    <div class="bgm-settings" id="bgmSettings" style="margin-top: 15px; display: none;">
+      <div style="display: flex; align-items: center; gap: 15px; flex-wrap: wrap;">
+        <label style="color: #888; font-size: 0.9em;">会話中のBGM音量:</label>
+        <input type="range" id="duckingLevel" min="0" max="50" value="5" style="width: 150px; accent-color: #00d9ff;">
+        <span id="duckingValue" style="color: #00d9ff; font-size: 0.9em; min-width: 40px;">5%</span>
+      </div>
+    </div>
   </div>
 
   <!-- 出力設定 -->
@@ -529,11 +537,11 @@
   </div>
 
   <script>
-    // 設定（固定値）
+    // 設定
     const CONFIG = {
       fadeInDuration: 3,      // BGMフェードイン秒数
       introDelay: 3,          // 会話開始前のBGMのみ秒数
-      duckingLevel: 0.15,     // ダッキング時のBGM音量（15%）
+      duckingLevel: 0.05,     // ダッキング時のBGM音量（5%）- UIで変更可能
       duckingTransition: 0.5, // ダッキング遷移時間
       outroDelay: 3,          // 会話終了後のBGMのみ秒数
       fadeOutDuration: 3,     // BGMフェードアウト秒数
@@ -554,6 +562,13 @@
     let playStartTime = 0;
     let playStartOffset = 0;
 
+    // プレビュー再生用
+    let previewBgmGain = null;
+    let previewStartTime = 0;
+    let previewVoiceStart = 0;
+    let previewVoiceEnd = 0;
+    let previewTotalDuration = 0;
+
     // DOM要素
     const voiceUpload = document.getElementById('voiceUpload');
     const voiceFile = document.getElementById('voiceFile');
@@ -561,6 +576,9 @@
     const bgmUpload = document.getElementById('bgmUpload');
     const bgmFile = document.getElementById('bgmFile');
     const bgmFileName = document.getElementById('bgmFileName');
+    const bgmSettings = document.getElementById('bgmSettings');
+    const duckingLevelSlider = document.getElementById('duckingLevel');
+    const duckingValueDisplay = document.getElementById('duckingValue');
     const waveformContainer = document.getElementById('waveformContainer');
     const waveformScroll = document.getElementById('waveformScroll');
     const waveformWrapper = document.getElementById('waveformWrapper');
@@ -838,9 +856,40 @@
     // BGMアップロード
     setupUpload(bgmUpload, bgmFile, bgmFileName, (buffer, name) => {
       bgmBuffer = buffer;
+      bgmSettings.style.display = 'block';
       updateButtons();
       showStatus('BGMを読み込みました', 'success');
       setTimeout(hideStatus, 2000);
+    });
+
+    // ダッキング音量スライダー
+    duckingLevelSlider.addEventListener('input', (e) => {
+      const value = parseInt(e.target.value);
+      CONFIG.duckingLevel = value / 100;
+      duckingValueDisplay.textContent = value + '%';
+
+      // プレビュー再生中の場合、リアルタイムで反映
+      if (isPlaying && previewBgmGain) {
+        const ctx = getAudioContext();
+        const elapsed = ctx.currentTime - previewStartTime;
+
+        // 現在ダッキング中かどうか
+        if (elapsed >= previewVoiceStart && elapsed < previewVoiceEnd) {
+          // ダッキング中なので新しい値を即座に適用
+          previewBgmGain.gain.cancelScheduledValues(ctx.currentTime);
+          previewBgmGain.gain.setValueAtTime(CONFIG.duckingLevel, ctx.currentTime);
+
+          // 残りのスケジュールを再設定
+          const voiceEndTime = previewStartTime + previewVoiceEnd;
+          const fadeOutStart = previewStartTime + previewVoiceEnd + CONFIG.outroDelay;
+          const endTime = previewStartTime + previewTotalDuration;
+
+          previewBgmGain.gain.setValueAtTime(CONFIG.duckingLevel, voiceEndTime);
+          previewBgmGain.gain.linearRampToValueAtTime(1, voiceEndTime + CONFIG.duckingTransition);
+          previewBgmGain.gain.setValueAtTime(1, fadeOutStart);
+          previewBgmGain.gain.linearRampToValueAtTime(0, endTime);
+        }
+      }
     });
 
     // トリミング表示更新
@@ -878,6 +927,7 @@
       });
       currentSources = [];
       isPlaying = false;
+      previewBgmGain = null; // プレビュー用GainNodeをクリア
       stopTrimPlayback();
       updateButtons();
     }
@@ -1097,12 +1147,19 @@
       const voiceEnd = voiceStart + voiceDuration;
       const totalDuration = voiceEnd + CONFIG.outroDelay + CONFIG.fadeOutDuration;
 
+      // プレビュー用の時間情報を保存
+      previewStartTime = ctx.currentTime;
+      previewVoiceStart = voiceStart;
+      previewVoiceEnd = voiceEnd;
+      previewTotalDuration = totalDuration;
+
       // BGMの必要なループ回数を計算
       const bgmLoopCount = Math.ceil(totalDuration / bgmBuffer.duration) + 1;
 
       // BGM再生（ループ）
       const bgmGain = ctx.createGain();
       bgmGain.connect(ctx.destination);
+      previewBgmGain = bgmGain; // リアルタイム調整用に保存
 
       // フェードイン
       bgmGain.gain.setValueAtTime(0, ctx.currentTime);
