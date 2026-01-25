@@ -496,6 +496,20 @@
       color: #00d9ff;
     }
 
+    .seek-bar {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-top: 12px;
+      font-size: 0.85em;
+      color: #888;
+    }
+
+    .seek-bar input[type="range"] {
+      flex: 1;
+      accent-color: #00d9ff;
+    }
+
     .output-timeline {
       position: absolute;
       bottom: 0;
@@ -611,10 +625,16 @@
         </div>
         <div class="output-playhead" id="outputPlayhead"></div>
       </div>
-      <div class="output-time-display">
-        <span><span class="current" id="outputCurrentTime">0:00.0</span> / <span id="outputTotalTime">0:00.0</span></span>
-        <span style="color: #4ade80;">会話区間を緑で表示</span>
-      </div>
+    </div>
+
+    <div class="output-time-display">
+      <span><span class="current" id="outputCurrentTime">0:00.0</span> / <span id="outputTotalTime">0:00.0</span></span>
+      <span style="color: #4ade80;">会話区間を緑で表示</span>
+    </div>
+
+    <div class="seek-bar">
+      <span>シーク:</span>
+      <input type="range" id="previewSeek" min="0" max="1000" value="0" step="1" disabled>
     </div>
 
     <div class="controls" style="margin-top: 20px;">
@@ -640,6 +660,7 @@
       outroDelay: 3,          // 会話終了後のBGMのみ秒数
       fadeOutDuration: 3,     // BGMフェードアウト秒数
     };
+    const SEEK_RESOLUTION = 1000;
 
     // 状態管理
     let audioContext = null;
@@ -663,6 +684,7 @@
     let previewVoiceEnd = 0;
     let previewTotalDuration = 0;
     let renderedBuffer = null;
+    let pendingPreviewOffset = 0;
     let outputPlayheadAnimationId = null;
 
     // DOM要素
@@ -707,6 +729,7 @@
     const outputPlayhead = document.getElementById('outputPlayhead');
     const outputCurrentTime = document.getElementById('outputCurrentTime');
     const outputTotalTime = document.getElementById('outputTotalTime');
+    const previewSeek = document.getElementById('previewSeek');
     const voiceRegion = document.getElementById('voiceRegion');
 
     // AudioContextの初期化
@@ -722,6 +745,33 @@
       const mins = Math.floor(seconds / 60);
       const secs = (seconds % 60).toFixed(1);
       return `${mins}:${secs.padStart(4, '0')}`;
+    }
+
+    function getPreviewTiming() {
+      if (!voiceBuffer) return null;
+      const voiceDuration = Math.max(0, (trimEnd - trimStart) * voiceBuffer.duration);
+      const voiceStart = CONFIG.fadeInDuration + CONFIG.introDelay;
+      const voiceEnd = voiceStart + voiceDuration;
+      const totalDuration = voiceEnd + CONFIG.outroDelay + CONFIG.fadeOutDuration;
+      return { voiceStart, voiceEnd, totalDuration };
+    }
+
+    function updatePreviewTimeline() {
+      const timing = getPreviewTiming();
+      if (!timing) {
+        previewTotalDuration = 0;
+        pendingPreviewOffset = 0;
+        outputCurrentTime.textContent = formatTime(0);
+        outputTotalTime.textContent = formatTime(0);
+        previewSeek.value = 0;
+        return;
+      }
+
+      previewTotalDuration = timing.totalDuration;
+      pendingPreviewOffset = Math.min(pendingPreviewOffset, previewTotalDuration);
+      outputCurrentTime.textContent = formatTime(pendingPreviewOffset);
+      outputTotalTime.textContent = formatTime(previewTotalDuration);
+      previewSeek.value = Math.round((pendingPreviewOffset / previewTotalDuration) * SEEK_RESOLUTION);
     }
 
     // ステータス表示
@@ -1006,6 +1056,7 @@
       trimStartTime.textContent = formatTime(startSec);
       trimEndTime.textContent = formatTime(endSec);
       trimDuration.textContent = formatTime(trimmedDuration);
+      updatePreviewTimeline();
     }
 
     // ボタン状態更新
@@ -1019,6 +1070,7 @@
       previewBtn.disabled = !ready;
       exportBtn.disabled = !ready;
       stopBtn.disabled = !isPlaying;
+      previewSeek.disabled = !ready;
     }
 
     // 再生停止
@@ -1361,6 +1413,7 @@
       const width = outputWaveformWrapper.clientWidth;
       outputPlayhead.style.left = (ratio * width) + 'px';
       outputCurrentTime.textContent = formatTime(elapsed);
+      previewSeek.value = Math.round(ratio * SEEK_RESOLUTION);
 
       outputPlayheadAnimationId = requestAnimationFrame(animateOutputPlayhead);
     }
@@ -1381,6 +1434,22 @@
       startPreviewFromPosition(seekTime);
     });
 
+    previewSeek.addEventListener('input', () => {
+      if (previewTotalDuration <= 0) return;
+      const ratio = previewSeek.value / SEEK_RESOLUTION;
+      const seekTime = ratio * previewTotalDuration;
+      pendingPreviewOffset = seekTime;
+      outputCurrentTime.textContent = formatTime(seekTime);
+    });
+
+    previewSeek.addEventListener('change', () => {
+      if (!voiceBuffer || !bgmBuffer || previewTotalDuration <= 0) return;
+      if (isPlaying) {
+        stopPlayback();
+        startPreviewFromPosition(pendingPreviewOffset);
+      }
+    });
+
     // 指定位置からプレビュー再生
     function startPreviewFromPosition(startOffset) {
       if (!voiceBuffer || !bgmBuffer) return;
@@ -1393,12 +1462,16 @@
       const voiceEnd = voiceStart + voiceDuration;
       const totalDuration = voiceEnd + CONFIG.outroDelay + CONFIG.fadeOutDuration;
 
-      if (startOffset >= totalDuration) return;
+      const clampedOffset = Math.max(0, Math.min(startOffset, totalDuration));
 
-      previewStartTime = ctx.currentTime - startOffset;
+      previewStartTime = ctx.currentTime - clampedOffset;
       previewVoiceStart = voiceStart;
       previewVoiceEnd = voiceEnd;
       previewTotalDuration = totalDuration;
+      pendingPreviewOffset = clampedOffset;
+      outputCurrentTime.textContent = formatTime(clampedOffset);
+      outputTotalTime.textContent = formatTime(totalDuration);
+      previewSeek.value = Math.round((clampedOffset / totalDuration) * SEEK_RESOLUTION);
 
       const bgmLoopCount = Math.ceil(totalDuration / bgmBuffer.duration) + 1;
 
@@ -1409,53 +1482,53 @@
 
       // ゲインスケジュール（startOffsetを考慮）
       const now = ctx.currentTime;
-      const scheduleTime = (t) => now + Math.max(0, t - startOffset);
+      const scheduleTime = (t) => now + Math.max(0, t - clampedOffset);
 
-      if (startOffset < CONFIG.fadeInDuration) {
-        const currentGain = startOffset / CONFIG.fadeInDuration;
+      if (clampedOffset < CONFIG.fadeInDuration) {
+        const currentGain = clampedOffset / CONFIG.fadeInDuration;
         bgmGain.gain.setValueAtTime(currentGain, now);
         bgmGain.gain.linearRampToValueAtTime(1, scheduleTime(CONFIG.fadeInDuration));
-      } else if (startOffset < voiceStart - CONFIG.duckingTransition) {
+      } else if (clampedOffset < voiceStart - CONFIG.duckingTransition) {
         bgmGain.gain.setValueAtTime(1, now);
-      } else if (startOffset < voiceStart) {
-        const progress = (startOffset - (voiceStart - CONFIG.duckingTransition)) / CONFIG.duckingTransition;
+      } else if (clampedOffset < voiceStart) {
+        const progress = (clampedOffset - (voiceStart - CONFIG.duckingTransition)) / CONFIG.duckingTransition;
         const currentGain = 1 - progress * (1 - CONFIG.duckingLevel);
         bgmGain.gain.setValueAtTime(currentGain, now);
         bgmGain.gain.linearRampToValueAtTime(CONFIG.duckingLevel, scheduleTime(voiceStart));
-      } else if (startOffset < voiceEnd) {
+      } else if (clampedOffset < voiceEnd) {
         bgmGain.gain.setValueAtTime(CONFIG.duckingLevel, now);
-      } else if (startOffset < voiceEnd + CONFIG.duckingTransition) {
-        const progress = (startOffset - voiceEnd) / CONFIG.duckingTransition;
+      } else if (clampedOffset < voiceEnd + CONFIG.duckingTransition) {
+        const progress = (clampedOffset - voiceEnd) / CONFIG.duckingTransition;
         const currentGain = CONFIG.duckingLevel + progress * (1 - CONFIG.duckingLevel);
         bgmGain.gain.setValueAtTime(currentGain, now);
         bgmGain.gain.linearRampToValueAtTime(1, scheduleTime(voiceEnd + CONFIG.duckingTransition));
-      } else if (startOffset < voiceEnd + CONFIG.outroDelay) {
+      } else if (clampedOffset < voiceEnd + CONFIG.outroDelay) {
         bgmGain.gain.setValueAtTime(1, now);
       } else {
         const fadeOutStart = voiceEnd + CONFIG.outroDelay;
-        const progress = (startOffset - fadeOutStart) / CONFIG.fadeOutDuration;
+        const progress = (clampedOffset - fadeOutStart) / CONFIG.fadeOutDuration;
         const currentGain = 1 - progress;
         bgmGain.gain.setValueAtTime(Math.max(0, currentGain), now);
       }
 
       // 残りのスケジュール
-      if (startOffset < voiceStart - CONFIG.duckingTransition) {
+      if (clampedOffset < voiceStart - CONFIG.duckingTransition) {
         bgmGain.gain.setValueAtTime(1, scheduleTime(voiceStart - CONFIG.duckingTransition));
       }
-      if (startOffset < voiceStart) {
+      if (clampedOffset < voiceStart) {
         bgmGain.gain.linearRampToValueAtTime(CONFIG.duckingLevel, scheduleTime(voiceStart));
       }
-      if (startOffset < voiceEnd) {
+      if (clampedOffset < voiceEnd) {
         bgmGain.gain.setValueAtTime(CONFIG.duckingLevel, scheduleTime(voiceEnd));
       }
-      if (startOffset < voiceEnd + CONFIG.duckingTransition) {
+      if (clampedOffset < voiceEnd + CONFIG.duckingTransition) {
         bgmGain.gain.linearRampToValueAtTime(1, scheduleTime(voiceEnd + CONFIG.duckingTransition));
       }
       const fadeOutStart = voiceEnd + CONFIG.outroDelay;
-      if (startOffset < fadeOutStart) {
+      if (clampedOffset < fadeOutStart) {
         bgmGain.gain.setValueAtTime(1, scheduleTime(fadeOutStart));
       }
-      if (startOffset < totalDuration) {
+      if (clampedOffset < totalDuration) {
         bgmGain.gain.linearRampToValueAtTime(0, scheduleTime(totalDuration));
       }
 
@@ -1464,30 +1537,30 @@
         const bgmStartTime = i * bgmBuffer.duration;
         const bgmEndTime = bgmStartTime + bgmBuffer.duration;
 
-        if (bgmEndTime <= startOffset) continue;
+        if (bgmEndTime <= clampedOffset) continue;
 
         const bgmSource = ctx.createBufferSource();
         bgmSource.buffer = bgmBuffer;
         bgmSource.connect(bgmGain);
 
-        if (bgmStartTime < startOffset) {
-          bgmSource.start(now, startOffset - bgmStartTime);
+        if (bgmStartTime < clampedOffset) {
+          bgmSource.start(now, clampedOffset - bgmStartTime);
         } else {
-          bgmSource.start(now + bgmStartTime - startOffset);
+          bgmSource.start(now + bgmStartTime - clampedOffset);
         }
         currentSources.push(bgmSource);
       }
 
       // 会話音声
-      if (startOffset < voiceEnd) {
+      if (clampedOffset < voiceEnd) {
         const voiceSource = ctx.createBufferSource();
         voiceSource.buffer = trimmedVoice;
         voiceSource.connect(ctx.destination);
 
-        if (startOffset > voiceStart) {
-          voiceSource.start(now, startOffset - voiceStart);
+        if (clampedOffset > voiceStart) {
+          voiceSource.start(now, clampedOffset - voiceStart);
         } else {
-          voiceSource.start(now + voiceStart - startOffset);
+          voiceSource.start(now + voiceStart - clampedOffset);
         }
         currentSources.push(voiceSource);
       }
@@ -1501,7 +1574,7 @@
       animateOutputPlayhead();
 
       // 自動停止
-      const remainingDuration = totalDuration - startOffset;
+      const remainingDuration = totalDuration - clampedOffset;
       setTimeout(() => {
         stopPlayback();
         hideStatus();
@@ -1512,73 +1585,7 @@
     previewBtn.addEventListener('click', () => {
       if (!voiceBuffer || !bgmBuffer) return;
       stopPlayback();
-
-      const ctx = getAudioContext();
-      const trimmedVoice = getTrimmedVoice();
-      const voiceDuration = trimmedVoice.duration;
-
-      // タイムライン計算
-      const bgmStart = 0;
-      const voiceStart = CONFIG.fadeInDuration + CONFIG.introDelay;
-      const voiceEnd = voiceStart + voiceDuration;
-      const totalDuration = voiceEnd + CONFIG.outroDelay + CONFIG.fadeOutDuration;
-
-      // プレビュー用の時間情報を保存
-      previewStartTime = ctx.currentTime;
-      previewVoiceStart = voiceStart;
-      previewVoiceEnd = voiceEnd;
-      previewTotalDuration = totalDuration;
-
-      // BGMの必要なループ回数を計算
-      const bgmLoopCount = Math.ceil(totalDuration / bgmBuffer.duration) + 1;
-
-      // BGM再生（ループ）
-      const bgmGain = ctx.createGain();
-      bgmGain.connect(ctx.destination);
-      previewBgmGain = bgmGain; // リアルタイム調整用に保存
-
-      // フェードイン
-      bgmGain.gain.setValueAtTime(0, ctx.currentTime);
-      bgmGain.gain.linearRampToValueAtTime(1, ctx.currentTime + CONFIG.fadeInDuration);
-
-      // ダッキング開始
-      bgmGain.gain.setValueAtTime(1, ctx.currentTime + voiceStart - CONFIG.duckingTransition);
-      bgmGain.gain.linearRampToValueAtTime(CONFIG.duckingLevel, ctx.currentTime + voiceStart);
-
-      // ダッキング終了
-      bgmGain.gain.setValueAtTime(CONFIG.duckingLevel, ctx.currentTime + voiceEnd);
-      bgmGain.gain.linearRampToValueAtTime(1, ctx.currentTime + voiceEnd + CONFIG.duckingTransition);
-
-      // フェードアウト
-      const fadeOutStart = voiceEnd + CONFIG.outroDelay;
-      bgmGain.gain.setValueAtTime(1, ctx.currentTime + fadeOutStart);
-      bgmGain.gain.linearRampToValueAtTime(0, ctx.currentTime + totalDuration);
-
-      // BGMをループ再生
-      for (let i = 0; i < bgmLoopCount; i++) {
-        const bgmSource = ctx.createBufferSource();
-        bgmSource.buffer = bgmBuffer;
-        bgmSource.connect(bgmGain);
-        bgmSource.start(ctx.currentTime + i * bgmBuffer.duration);
-        currentSources.push(bgmSource);
-      }
-
-      // 会話音声再生
-      const voiceSource = ctx.createBufferSource();
-      voiceSource.buffer = trimmedVoice;
-      voiceSource.connect(ctx.destination);
-      voiceSource.start(ctx.currentTime + voiceStart);
-      currentSources.push(voiceSource);
-
-      isPlaying = true;
-      updateButtons();
-      showStatus('プレビュー再生中...', 'processing');
-
-      // 自動停止
-      setTimeout(() => {
-        stopPlayback();
-        hideStatus();
-      }, totalDuration * 1000 + 100);
+      startPreviewFromPosition(pendingPreviewOffset);
     });
 
     // WAV書き出し
