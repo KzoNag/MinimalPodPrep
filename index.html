@@ -432,6 +432,86 @@
       width: 0%;
       transition: width 0.1s;
     }
+
+    .output-waveform-container {
+      margin-top: 20px;
+      display: none;
+    }
+
+    .output-waveform-container.visible {
+      display: block;
+    }
+
+    .output-waveform-wrapper {
+      position: relative;
+      height: 80px;
+      background: #0f3460;
+      border-radius: 8px;
+      overflow: hidden;
+      cursor: pointer;
+    }
+
+    #outputWaveform {
+      width: 100%;
+      height: 80px;
+      display: block;
+    }
+
+    .output-playhead {
+      position: absolute;
+      top: 0;
+      bottom: 0;
+      width: 2px;
+      background: #fff;
+      pointer-events: none;
+      z-index: 10;
+      display: none;
+    }
+
+    .output-playhead.visible {
+      display: block;
+    }
+
+    .output-playhead::before {
+      content: '';
+      position: absolute;
+      top: 0;
+      left: 50%;
+      transform: translateX(-50%);
+      border-left: 5px solid transparent;
+      border-right: 5px solid transparent;
+      border-top: 7px solid #fff;
+    }
+
+    .output-time-display {
+      display: flex;
+      justify-content: space-between;
+      margin-top: 8px;
+      font-family: monospace;
+      font-size: 0.85em;
+      color: #888;
+    }
+
+    .output-time-display .current {
+      color: #00d9ff;
+    }
+
+    .output-timeline {
+      position: absolute;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      height: 20px;
+      pointer-events: none;
+    }
+
+    .output-timeline .voice-region {
+      position: absolute;
+      top: 0;
+      height: 4px;
+      background: rgba(74, 222, 128, 0.6);
+      border-radius: 2px;
+    }
   </style>
 </head>
 <body>
@@ -523,6 +603,20 @@
       </ol>
     </div>
 
+    <div class="output-waveform-container" id="outputWaveformContainer">
+      <div class="output-waveform-wrapper" id="outputWaveformWrapper">
+        <canvas id="outputWaveform"></canvas>
+        <div class="output-timeline" id="outputTimeline">
+          <div class="voice-region" id="voiceRegion"></div>
+        </div>
+        <div class="output-playhead" id="outputPlayhead"></div>
+      </div>
+      <div class="output-time-display">
+        <span><span class="current" id="outputCurrentTime">0:00.0</span> / <span id="outputTotalTime">0:00.0</span></span>
+        <span style="color: #4ade80;">会話区間を緑で表示</span>
+      </div>
+    </div>
+
     <div class="controls" style="margin-top: 20px;">
       <button id="previewBtn" disabled>プレビュー再生</button>
       <button id="stopBtn" class="secondary" disabled>停止</button>
@@ -568,6 +662,8 @@
     let previewVoiceStart = 0;
     let previewVoiceEnd = 0;
     let previewTotalDuration = 0;
+    let renderedBuffer = null;
+    let outputPlayheadAnimationId = null;
 
     // DOM要素
     const voiceUpload = document.getElementById('voiceUpload');
@@ -605,6 +701,13 @@
     const statusDiv = document.getElementById('status');
     const progressBar = document.getElementById('progressBar');
     const progressFill = document.getElementById('progressFill');
+    const outputWaveformContainer = document.getElementById('outputWaveformContainer');
+    const outputWaveformWrapper = document.getElementById('outputWaveformWrapper');
+    const outputWaveformCanvas = document.getElementById('outputWaveform');
+    const outputPlayhead = document.getElementById('outputPlayhead');
+    const outputCurrentTime = document.getElementById('outputCurrentTime');
+    const outputTotalTime = document.getElementById('outputTotalTime');
+    const voiceRegion = document.getElementById('voiceRegion');
 
     // AudioContextの初期化
     function getAudioContext() {
@@ -1130,6 +1233,279 @@
       }
 
       return trimmedBuffer;
+    }
+
+    // 合成波形を描画
+    function drawOutputWaveform() {
+      if (!renderedBuffer) return;
+
+      const canvas = outputWaveformCanvas;
+      const ctx = canvas.getContext('2d');
+      const dpr = window.devicePixelRatio || 1;
+
+      const width = outputWaveformWrapper.clientWidth;
+      const height = 80;
+
+      canvas.style.width = width + 'px';
+      canvas.style.height = height + 'px';
+      canvas.width = width * dpr;
+      canvas.height = height * dpr;
+      ctx.scale(dpr, dpr);
+
+      const data = renderedBuffer.getChannelData(0);
+
+      // 背景
+      ctx.fillStyle = '#0f3460';
+      ctx.fillRect(0, 0, width, height);
+
+      // 会話区間をハイライト
+      const voiceStartX = (previewVoiceStart / previewTotalDuration) * width;
+      const voiceEndX = (previewVoiceEnd / previewTotalDuration) * width;
+      ctx.fillStyle = 'rgba(74, 222, 128, 0.1)';
+      ctx.fillRect(voiceStartX, 0, voiceEndX - voiceStartX, height);
+
+      // 波形描画
+      ctx.beginPath();
+      ctx.strokeStyle = '#00d9ff';
+      ctx.lineWidth = 1;
+
+      for (let i = 0; i < width; i++) {
+        let min = 1.0;
+        let max = -1.0;
+        const startIdx = Math.floor(i * data.length / width);
+        const endIdx = Math.floor((i + 1) * data.length / width);
+
+        for (let j = startIdx; j < endIdx; j++) {
+          const datum = data[j];
+          if (datum < min) min = datum;
+          if (datum > max) max = datum;
+        }
+
+        const y1 = ((1 + min) / 2) * height;
+        const y2 = ((1 + max) / 2) * height;
+
+        ctx.moveTo(i, y1);
+        ctx.lineTo(i, y2);
+      }
+
+      ctx.stroke();
+
+      // 会話区間のマーカー
+      voiceRegion.style.left = voiceStartX + 'px';
+      voiceRegion.style.width = (voiceEndX - voiceStartX) + 'px';
+
+      // 時間表示
+      outputTotalTime.textContent = formatTime(previewTotalDuration);
+    }
+
+    // 合成バッファを生成（プレビュー表示用）
+    async function generatePreviewBuffer() {
+      if (!voiceBuffer || !bgmBuffer) return null;
+
+      const trimmedVoice = getTrimmedVoice();
+      const voiceDuration = trimmedVoice.duration;
+      const voiceStart = CONFIG.fadeInDuration + CONFIG.introDelay;
+      const voiceEnd = voiceStart + voiceDuration;
+      const totalDuration = voiceEnd + CONFIG.outroDelay + CONFIG.fadeOutDuration;
+
+      const sampleRate = voiceBuffer.sampleRate;
+      const numChannels = 2;
+      const totalSamples = Math.ceil(totalDuration * sampleRate);
+
+      const offlineCtx = new OfflineAudioContext(numChannels, totalSamples, sampleRate);
+
+      // BGM
+      const bgmLoopCount = Math.ceil(totalDuration / bgmBuffer.duration) + 1;
+      const bgmGain = offlineCtx.createGain();
+      bgmGain.connect(offlineCtx.destination);
+
+      bgmGain.gain.setValueAtTime(0, 0);
+      bgmGain.gain.linearRampToValueAtTime(1, CONFIG.fadeInDuration);
+      bgmGain.gain.setValueAtTime(1, voiceStart - CONFIG.duckingTransition);
+      bgmGain.gain.linearRampToValueAtTime(CONFIG.duckingLevel, voiceStart);
+      bgmGain.gain.setValueAtTime(CONFIG.duckingLevel, voiceEnd);
+      bgmGain.gain.linearRampToValueAtTime(1, voiceEnd + CONFIG.duckingTransition);
+      const fadeOutStart = voiceEnd + CONFIG.outroDelay;
+      bgmGain.gain.setValueAtTime(1, fadeOutStart);
+      bgmGain.gain.linearRampToValueAtTime(0, totalDuration);
+
+      for (let i = 0; i < bgmLoopCount; i++) {
+        const bgmSource = offlineCtx.createBufferSource();
+        bgmSource.buffer = bgmBuffer;
+        bgmSource.connect(bgmGain);
+        bgmSource.start(i * bgmBuffer.duration);
+      }
+
+      // 会話
+      const voiceSource = offlineCtx.createBufferSource();
+      voiceSource.buffer = trimmedVoice;
+      voiceSource.connect(offlineCtx.destination);
+      voiceSource.start(voiceStart);
+
+      return await offlineCtx.startRendering();
+    }
+
+    // 出力波形のプレイヘッドアニメーション
+    function animateOutputPlayhead() {
+      if (!isPlaying) return;
+
+      const ctx = getAudioContext();
+      const elapsed = ctx.currentTime - previewStartTime;
+
+      if (elapsed >= previewTotalDuration) {
+        outputPlayhead.classList.remove('visible');
+        return;
+      }
+
+      const ratio = elapsed / previewTotalDuration;
+      const width = outputWaveformWrapper.clientWidth;
+      outputPlayhead.style.left = (ratio * width) + 'px';
+      outputCurrentTime.textContent = formatTime(elapsed);
+
+      outputPlayheadAnimationId = requestAnimationFrame(animateOutputPlayhead);
+    }
+
+    // 出力波形クリックでシーク再生
+    outputWaveformWrapper.addEventListener('click', async (e) => {
+      if (!voiceBuffer || !bgmBuffer) return;
+
+      const rect = outputWaveformWrapper.getBoundingClientRect();
+      const x = e.clientX - rect.left;
+      const ratio = x / rect.width;
+      const seekTime = ratio * previewTotalDuration;
+
+      // 再生中なら一度停止
+      stopPlayback();
+
+      // 指定位置から再生開始
+      startPreviewFromPosition(seekTime);
+    });
+
+    // 指定位置からプレビュー再生
+    function startPreviewFromPosition(startOffset) {
+      if (!voiceBuffer || !bgmBuffer) return;
+
+      const ctx = getAudioContext();
+      const trimmedVoice = getTrimmedVoice();
+      const voiceDuration = trimmedVoice.duration;
+
+      const voiceStart = CONFIG.fadeInDuration + CONFIG.introDelay;
+      const voiceEnd = voiceStart + voiceDuration;
+      const totalDuration = voiceEnd + CONFIG.outroDelay + CONFIG.fadeOutDuration;
+
+      if (startOffset >= totalDuration) return;
+
+      previewStartTime = ctx.currentTime - startOffset;
+      previewVoiceStart = voiceStart;
+      previewVoiceEnd = voiceEnd;
+      previewTotalDuration = totalDuration;
+
+      const bgmLoopCount = Math.ceil(totalDuration / bgmBuffer.duration) + 1;
+
+      // BGM
+      const bgmGain = ctx.createGain();
+      bgmGain.connect(ctx.destination);
+      previewBgmGain = bgmGain;
+
+      // ゲインスケジュール（startOffsetを考慮）
+      const now = ctx.currentTime;
+      const scheduleTime = (t) => now + Math.max(0, t - startOffset);
+
+      if (startOffset < CONFIG.fadeInDuration) {
+        const currentGain = startOffset / CONFIG.fadeInDuration;
+        bgmGain.gain.setValueAtTime(currentGain, now);
+        bgmGain.gain.linearRampToValueAtTime(1, scheduleTime(CONFIG.fadeInDuration));
+      } else if (startOffset < voiceStart - CONFIG.duckingTransition) {
+        bgmGain.gain.setValueAtTime(1, now);
+      } else if (startOffset < voiceStart) {
+        const progress = (startOffset - (voiceStart - CONFIG.duckingTransition)) / CONFIG.duckingTransition;
+        const currentGain = 1 - progress * (1 - CONFIG.duckingLevel);
+        bgmGain.gain.setValueAtTime(currentGain, now);
+        bgmGain.gain.linearRampToValueAtTime(CONFIG.duckingLevel, scheduleTime(voiceStart));
+      } else if (startOffset < voiceEnd) {
+        bgmGain.gain.setValueAtTime(CONFIG.duckingLevel, now);
+      } else if (startOffset < voiceEnd + CONFIG.duckingTransition) {
+        const progress = (startOffset - voiceEnd) / CONFIG.duckingTransition;
+        const currentGain = CONFIG.duckingLevel + progress * (1 - CONFIG.duckingLevel);
+        bgmGain.gain.setValueAtTime(currentGain, now);
+        bgmGain.gain.linearRampToValueAtTime(1, scheduleTime(voiceEnd + CONFIG.duckingTransition));
+      } else if (startOffset < voiceEnd + CONFIG.outroDelay) {
+        bgmGain.gain.setValueAtTime(1, now);
+      } else {
+        const fadeOutStart = voiceEnd + CONFIG.outroDelay;
+        const progress = (startOffset - fadeOutStart) / CONFIG.fadeOutDuration;
+        const currentGain = 1 - progress;
+        bgmGain.gain.setValueAtTime(Math.max(0, currentGain), now);
+      }
+
+      // 残りのスケジュール
+      if (startOffset < voiceStart - CONFIG.duckingTransition) {
+        bgmGain.gain.setValueAtTime(1, scheduleTime(voiceStart - CONFIG.duckingTransition));
+      }
+      if (startOffset < voiceStart) {
+        bgmGain.gain.linearRampToValueAtTime(CONFIG.duckingLevel, scheduleTime(voiceStart));
+      }
+      if (startOffset < voiceEnd) {
+        bgmGain.gain.setValueAtTime(CONFIG.duckingLevel, scheduleTime(voiceEnd));
+      }
+      if (startOffset < voiceEnd + CONFIG.duckingTransition) {
+        bgmGain.gain.linearRampToValueAtTime(1, scheduleTime(voiceEnd + CONFIG.duckingTransition));
+      }
+      const fadeOutStart = voiceEnd + CONFIG.outroDelay;
+      if (startOffset < fadeOutStart) {
+        bgmGain.gain.setValueAtTime(1, scheduleTime(fadeOutStart));
+      }
+      if (startOffset < totalDuration) {
+        bgmGain.gain.linearRampToValueAtTime(0, scheduleTime(totalDuration));
+      }
+
+      // BGMをループ再生（startOffsetを考慮）
+      for (let i = 0; i < bgmLoopCount; i++) {
+        const bgmStartTime = i * bgmBuffer.duration;
+        const bgmEndTime = bgmStartTime + bgmBuffer.duration;
+
+        if (bgmEndTime <= startOffset) continue;
+
+        const bgmSource = ctx.createBufferSource();
+        bgmSource.buffer = bgmBuffer;
+        bgmSource.connect(bgmGain);
+
+        if (bgmStartTime < startOffset) {
+          bgmSource.start(now, startOffset - bgmStartTime);
+        } else {
+          bgmSource.start(now + bgmStartTime - startOffset);
+        }
+        currentSources.push(bgmSource);
+      }
+
+      // 会話音声
+      if (startOffset < voiceEnd) {
+        const voiceSource = ctx.createBufferSource();
+        voiceSource.buffer = trimmedVoice;
+        voiceSource.connect(ctx.destination);
+
+        if (startOffset > voiceStart) {
+          voiceSource.start(now, startOffset - voiceStart);
+        } else {
+          voiceSource.start(now + voiceStart - startOffset);
+        }
+        currentSources.push(voiceSource);
+      }
+
+      isPlaying = true;
+      updateButtons();
+      showStatus('プレビュー再生中...', 'processing');
+
+      // プレイヘッド表示
+      outputPlayhead.classList.add('visible');
+      animateOutputPlayhead();
+
+      // 自動停止
+      const remainingDuration = totalDuration - startOffset;
+      setTimeout(() => {
+        stopPlayback();
+        hideStatus();
+      }, remainingDuration * 1000 + 100);
     }
 
     // プレビュー再生
