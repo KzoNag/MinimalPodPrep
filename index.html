@@ -397,6 +397,18 @@
       color: #ef4444;
     }
 
+    .status-text {
+      display: flex;
+      justify-content: center;
+      gap: 8px;
+      font-weight: 600;
+    }
+
+    .status-percent {
+      color: #fff;
+      font-variant-numeric: tabular-nums;
+    }
+
     .info-box {
       background: #0f3460;
       border-radius: 8px;
@@ -644,11 +656,15 @@
       <button id="exportMp3Btn" disabled>MP3で書き出し</button>
     </div>
 
-    <div class="progress-bar" id="progressBar">
-      <div class="fill" id="progressFill"></div>
+    <div class="status" id="status">
+      <div class="status-text">
+        <span id="statusMessage"></span>
+        <span class="status-percent" id="statusPercent"></span>
+      </div>
+      <div class="progress-bar" id="progressBar">
+        <div class="fill" id="progressFill"></div>
+      </div>
     </div>
-
-    <div class="status" id="status"></div>
   </div>
 
   <script src="https://cdnjs.cloudflare.com/ajax/libs/lamejs/1.2.0/lame.min.js"></script>
@@ -724,6 +740,8 @@
     const exportBtn = document.getElementById('exportBtn');
     const exportMp3Btn = document.getElementById('exportMp3Btn');
     const statusDiv = document.getElementById('status');
+    const statusMessage = document.getElementById('statusMessage');
+    const statusPercent = document.getElementById('statusPercent');
     const progressBar = document.getElementById('progressBar');
     const progressFill = document.getElementById('progressFill');
     const outputWaveformContainer = document.getElementById('outputWaveformContainer');
@@ -779,12 +797,27 @@
 
     // ステータス表示
     function showStatus(message, type = 'processing') {
-      statusDiv.textContent = message;
+      statusMessage.textContent = message;
+      statusPercent.textContent = '';
       statusDiv.className = `status visible ${type}`;
+      progressBar.classList.toggle('visible', type === 'processing');
     }
 
     function hideStatus() {
       statusDiv.className = 'status';
+      statusMessage.textContent = '';
+      statusPercent.textContent = '';
+      progressBar.classList.remove('visible');
+    }
+
+    function setProgress(percent) {
+      const clamped = Math.max(0, Math.min(100, percent));
+      progressFill.style.width = clamped.toFixed(1) + '%';
+      statusPercent.textContent = `${clamped.toFixed(1)}%`;
+    }
+
+    function yieldToMainThread() {
+      return new Promise(resolve => setTimeout(resolve, 0));
     }
 
     function downloadBlob(blob, filename) {
@@ -1652,30 +1685,29 @@
       if (!voiceBuffer || !bgmBuffer) return;
 
       showStatus('WAVファイルを生成中...', 'processing');
-      progressBar.classList.add('visible');
-      progressFill.style.width = '0%';
+      setProgress(0);
 
       try {
-        progressFill.style.width = '30%';
+        setProgress(20);
         const renderedBuffer = await renderMixBuffer();
         if (!renderedBuffer) throw new Error('レンダリングに失敗しました');
 
-        progressFill.style.width = '60%';
-        const wavBlob = encodeWAV(renderedBuffer);
+        setProgress(50);
+        const wavBlob = await encodeWAVAsync(renderedBuffer, (ratio) => {
+          setProgress(50 + ratio * 40);
+        });
 
-        progressFill.style.width = '90%';
+        setProgress(95);
         downloadBlob(wavBlob, 'podcast_output.wav');
 
-        progressFill.style.width = '100%';
+        setProgress(100);
         showStatus('WAVファイルを保存しました', 'success');
 
         setTimeout(() => {
-          progressBar.classList.remove('visible');
           hideStatus();
         }, 3000);
       } catch (error) {
         showStatus('書き出しに失敗しました: ' + error.message, 'error');
-        progressBar.classList.remove('visible');
       }
     });
 
@@ -1687,35 +1719,34 @@
       }
 
       showStatus('MP3ファイルを生成中...', 'processing');
-      progressBar.classList.add('visible');
-      progressFill.style.width = '0%';
+      setProgress(0);
 
       try {
-        progressFill.style.width = '25%';
+        setProgress(20);
         const renderedBuffer = await renderMixBuffer();
         if (!renderedBuffer) throw new Error('レンダリングに失敗しました');
 
-        progressFill.style.width = '65%';
-        const mp3Blob = encodeMP3(renderedBuffer);
+        setProgress(50);
+        const mp3Blob = await encodeMP3Async(renderedBuffer, (ratio) => {
+          setProgress(50 + ratio * 40);
+        });
 
-        progressFill.style.width = '90%';
+        setProgress(95);
         downloadBlob(mp3Blob, 'podcast_output.mp3');
 
-        progressFill.style.width = '100%';
+        setProgress(100);
         showStatus('MP3ファイルを保存しました', 'success');
 
         setTimeout(() => {
-          progressBar.classList.remove('visible');
           hideStatus();
         }, 3000);
       } catch (error) {
         showStatus('書き出しに失敗しました: ' + error.message, 'error');
-        progressBar.classList.remove('visible');
       }
     });
 
     // WAVエンコード
-    function encodeWAV(audioBuffer) {
+    async function encodeWAVAsync(audioBuffer, onProgress) {
       const numChannels = audioBuffer.numberOfChannels;
       const sampleRate = audioBuffer.sampleRate;
       const format = 1; // PCM
@@ -1751,13 +1782,19 @@
       }
 
       let offset = 44;
-      for (let i = 0; i < samples; i++) {
-        for (let ch = 0; ch < numChannels; ch++) {
-          const sample = Math.max(-1, Math.min(1, channels[ch][i]));
-          const intSample = sample < 0 ? sample * 0x8000 : sample * 0x7FFF;
-          view.setInt16(offset, intSample, true);
-          offset += 2;
+      const chunkSize = Math.max(4096, Math.floor(samples / 100));
+      for (let start = 0; start < samples; start += chunkSize) {
+        const end = Math.min(samples, start + chunkSize);
+        for (let i = start; i < end; i++) {
+          for (let ch = 0; ch < numChannels; ch++) {
+            const sample = Math.max(-1, Math.min(1, channels[ch][i]));
+            const intSample = sample < 0 ? sample * 0x8000 : sample * 0x7FFF;
+            view.setInt16(offset, intSample, true);
+            offset += 2;
+          }
         }
+        if (onProgress) onProgress(end / samples);
+        await yieldToMainThread();
       }
 
       return new Blob([buffer], { type: 'audio/wav' });
@@ -1772,7 +1809,7 @@
       return output;
     }
 
-    function encodeMP3(audioBuffer, bitrate = 128) {
+    async function encodeMP3Async(audioBuffer, onProgress, bitrate = 128) {
       const numChannels = audioBuffer.numberOfChannels;
       const sampleRate = audioBuffer.sampleRate;
       const mp3encoder = new lamejs.Mp3Encoder(numChannels, sampleRate, bitrate);
@@ -1782,6 +1819,7 @@
       const left = audioBuffer.getChannelData(0);
       const right = numChannels > 1 ? audioBuffer.getChannelData(1) : null;
 
+      let blocksSinceYield = 0;
       for (let i = 0; i < audioBuffer.length; i += blockSize) {
         const leftChunk = floatTo16BitPCM(left.subarray(i, i + blockSize));
         let mp3buf;
@@ -1792,10 +1830,17 @@
           mp3buf = mp3encoder.encodeBuffer(leftChunk);
         }
         if (mp3buf.length > 0) mp3Data.push(mp3buf);
+        if (onProgress) onProgress(Math.min(1, i / audioBuffer.length));
+        blocksSinceYield += 1;
+        if (blocksSinceYield >= 50) {
+          blocksSinceYield = 0;
+          await yieldToMainThread();
+        }
       }
 
       const end = mp3encoder.flush();
       if (end.length > 0) mp3Data.push(end);
+      if (onProgress) onProgress(1);
 
       return new Blob(mp3Data, { type: 'audio/mpeg' });
     }
