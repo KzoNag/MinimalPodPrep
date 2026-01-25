@@ -1,0 +1,1258 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Podcast Editor</title>
+  <style>
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      max-width: 900px;
+      margin: 0 auto;
+      padding: 20px;
+      background: #1a1a2e;
+      color: #eee;
+      min-height: 100vh;
+    }
+
+    h1 {
+      text-align: center;
+      color: #00d9ff;
+      margin-bottom: 30px;
+    }
+
+    .section {
+      background: #16213e;
+      border-radius: 12px;
+      padding: 20px;
+      margin-bottom: 20px;
+    }
+
+    .section h2 {
+      margin-top: 0;
+      color: #00d9ff;
+      font-size: 1.2em;
+      border-bottom: 1px solid #0f3460;
+      padding-bottom: 10px;
+    }
+
+    .upload-area {
+      border: 2px dashed #0f3460;
+      border-radius: 8px;
+      padding: 30px;
+      text-align: center;
+      cursor: pointer;
+      transition: all 0.3s;
+    }
+
+    .upload-area:hover {
+      border-color: #00d9ff;
+      background: rgba(0, 217, 255, 0.05);
+    }
+
+    .upload-area.has-file {
+      border-color: #4ade80;
+      background: rgba(74, 222, 128, 0.1);
+    }
+
+    .upload-area input[type="file"] {
+      display: none;
+    }
+
+    .file-name {
+      margin-top: 10px;
+      color: #4ade80;
+      font-weight: bold;
+    }
+
+    .waveform-container {
+      margin-top: 20px;
+      display: none;
+    }
+
+    .waveform-container.visible {
+      display: block;
+    }
+
+    .waveform-toolbar {
+      display: flex;
+      align-items: center;
+      gap: 15px;
+      margin-bottom: 10px;
+      flex-wrap: wrap;
+    }
+
+    .zoom-control {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .zoom-control label {
+      font-size: 0.9em;
+      color: #888;
+    }
+
+    .zoom-control input[type="range"] {
+      width: 120px;
+      accent-color: #00d9ff;
+    }
+
+    .zoom-control .zoom-value {
+      font-size: 0.85em;
+      color: #00d9ff;
+      min-width: 35px;
+    }
+
+    .time-display {
+      display: flex;
+      gap: 20px;
+      font-family: monospace;
+      font-size: 0.9em;
+    }
+
+    .time-display .label {
+      color: #888;
+    }
+
+    .time-display .start-time {
+      color: #4ade80;
+    }
+
+    .time-display .end-time {
+      color: #f87171;
+    }
+
+    .time-display .duration {
+      color: #00d9ff;
+    }
+
+    .waveform-scroll {
+      overflow-x: auto;
+      overflow-y: hidden;
+      background: #0f3460;
+      border-radius: 8px;
+      position: relative;
+    }
+
+    .waveform-wrapper {
+      position: relative;
+      height: 120px;
+      min-width: 100%;
+    }
+
+    #waveform {
+      height: 120px;
+      background: #0f3460;
+      display: block;
+    }
+
+    .trim-overlay {
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      pointer-events: none;
+    }
+
+    .trim-region {
+      position: absolute;
+      top: 0;
+      bottom: 0;
+      background: rgba(0, 217, 255, 0.15);
+      pointer-events: none;
+    }
+
+    .trim-handle {
+      position: absolute;
+      top: 0;
+      bottom: 0;
+      width: 16px;
+      cursor: ew-resize;
+      pointer-events: auto;
+      z-index: 20;
+      transform: translateX(-50%);
+    }
+
+    .trim-handle::before {
+      content: '';
+      position: absolute;
+      top: 0;
+      bottom: 0;
+      left: 50%;
+      width: 3px;
+      transform: translateX(-50%);
+    }
+
+    .trim-handle::after {
+      content: '';
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      width: 10px;
+      height: 40px;
+      border-radius: 5px;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.3);
+    }
+
+    .trim-handle.start::before {
+      background: #4ade80;
+    }
+
+    .trim-handle.start::after {
+      background: #4ade80;
+    }
+
+    .trim-handle.end::before {
+      background: #f87171;
+    }
+
+    .trim-handle.end::after {
+      background: #f87171;
+    }
+
+    .trim-handle:hover::after {
+      height: 50px;
+      width: 12px;
+    }
+
+    .excluded-region {
+      position: absolute;
+      top: 0;
+      bottom: 0;
+      background: rgba(0, 0, 0, 0.5);
+      pointer-events: none;
+    }
+
+    .excluded-region.left {
+      left: 0;
+    }
+
+    .excluded-region.right {
+      right: 0;
+    }
+
+    .playhead {
+      position: absolute;
+      top: 0;
+      bottom: 0;
+      width: 2px;
+      background: #fff;
+      pointer-events: none;
+      z-index: 15;
+      display: none;
+    }
+
+    .playhead.visible {
+      display: block;
+    }
+
+    .playhead::before {
+      content: '';
+      position: absolute;
+      top: 0;
+      left: 50%;
+      transform: translateX(-50%);
+      border-left: 6px solid transparent;
+      border-right: 6px solid transparent;
+      border-top: 8px solid #fff;
+    }
+
+    .seek-overlay {
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      cursor: pointer;
+      z-index: 5;
+    }
+
+    .current-time-display {
+      font-family: monospace;
+      font-size: 0.85em;
+      color: #fff;
+      background: rgba(0, 0, 0, 0.7);
+      padding: 2px 6px;
+      border-radius: 4px;
+      position: absolute;
+      top: 5px;
+      left: 50%;
+      transform: translateX(-50%);
+      pointer-events: none;
+      white-space: nowrap;
+      display: none;
+    }
+
+    .current-time-display.visible {
+      display: block;
+    }
+
+    .trim-controls {
+      margin-top: 15px;
+    }
+
+    .trim-buttons {
+      display: flex;
+      gap: 10px;
+      justify-content: center;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+
+    .trim-buttons button {
+      padding: 10px 20px;
+      font-size: 0.9em;
+    }
+
+    .trim-hint {
+      text-align: center;
+      font-size: 0.85em;
+      color: #888;
+      margin-top: 10px;
+    }
+
+    .controls {
+      display: flex;
+      gap: 15px;
+      justify-content: center;
+      flex-wrap: wrap;
+    }
+
+    button {
+      background: #00d9ff;
+      color: #1a1a2e;
+      border: none;
+      padding: 12px 30px;
+      border-radius: 8px;
+      font-size: 1em;
+      font-weight: bold;
+      cursor: pointer;
+      transition: all 0.3s;
+    }
+
+    button:hover:not(:disabled) {
+      background: #00b8d9;
+      transform: translateY(-2px);
+    }
+
+    button:disabled {
+      background: #555;
+      color: #888;
+      cursor: not-allowed;
+    }
+
+    button.secondary {
+      background: #0f3460;
+      color: #00d9ff;
+    }
+
+    button.secondary:hover:not(:disabled) {
+      background: #1a4a7a;
+    }
+
+    .status {
+      text-align: center;
+      margin-top: 15px;
+      padding: 10px;
+      border-radius: 8px;
+      display: none;
+    }
+
+    .status.visible {
+      display: block;
+    }
+
+    .status.processing {
+      background: rgba(0, 217, 255, 0.2);
+      color: #00d9ff;
+    }
+
+    .status.success {
+      background: rgba(74, 222, 128, 0.2);
+      color: #4ade80;
+    }
+
+    .status.error {
+      background: rgba(239, 68, 68, 0.2);
+      color: #ef4444;
+    }
+
+    .info-box {
+      background: #0f3460;
+      border-radius: 8px;
+      padding: 15px;
+      margin-top: 15px;
+      font-size: 0.9em;
+      line-height: 1.6;
+    }
+
+    .info-box h3 {
+      margin: 0 0 10px 0;
+      color: #00d9ff;
+      font-size: 1em;
+    }
+
+    .progress-bar {
+      width: 100%;
+      height: 4px;
+      background: #0f3460;
+      border-radius: 2px;
+      margin-top: 10px;
+      overflow: hidden;
+      display: none;
+    }
+
+    .progress-bar.visible {
+      display: block;
+    }
+
+    .progress-bar .fill {
+      height: 100%;
+      background: #00d9ff;
+      width: 0%;
+      transition: width 0.1s;
+    }
+  </style>
+</head>
+<body>
+  <h1>Podcast Editor</h1>
+
+  <!-- 会話音声セクション -->
+  <div class="section">
+    <h2>1. 会話音声</h2>
+    <div class="upload-area" id="voiceUpload">
+      <div>クリックまたはドラッグ&ドロップで音声ファイルを選択</div>
+      <div style="margin-top: 5px; font-size: 0.9em; color: #888;">MP3, WAV対応</div>
+      <input type="file" id="voiceFile" accept="audio/*">
+      <div class="file-name" id="voiceFileName"></div>
+    </div>
+
+    <div class="waveform-container" id="waveformContainer">
+      <div class="waveform-toolbar">
+        <div class="zoom-control">
+          <label>ズーム:</label>
+          <input type="range" id="zoomSlider" min="1" max="50" value="1" step="1">
+          <span class="zoom-value" id="zoomValue">1x</span>
+        </div>
+        <div class="time-display">
+          <span><span class="label">開始:</span> <span class="start-time" id="trimStartTime">0:00.0</span></span>
+          <span><span class="label">終了:</span> <span class="end-time" id="trimEndTime">0:00.0</span></span>
+          <span><span class="label">長さ:</span> <span class="duration" id="trimDuration">0:00.0</span></span>
+        </div>
+      </div>
+
+      <div class="waveform-scroll" id="waveformScroll">
+        <div class="waveform-wrapper" id="waveformWrapper">
+          <canvas id="waveform"></canvas>
+          <div class="trim-overlay" id="trimOverlay">
+            <div class="excluded-region left" id="excludedLeft"></div>
+            <div class="excluded-region right" id="excludedRight"></div>
+            <div class="trim-region" id="trimRegion"></div>
+            <div class="seek-overlay" id="seekOverlay"></div>
+            <div class="trim-handle start" id="handleStart"></div>
+            <div class="trim-handle end" id="handleEnd"></div>
+            <div class="playhead" id="playhead">
+              <div class="current-time-display" id="currentTimeDisplay">0:00.0</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="trim-controls">
+        <div class="trim-buttons">
+          <button class="secondary" id="playTrimmed">再生</button>
+          <button class="secondary" id="stopTrimmed" disabled>停止</button>
+        </div>
+        <div class="trim-hint">ハンドルをドラッグしてトリミング範囲を調整 / 波形クリックでその位置から再生 / Shift+クリックでハンドル移動</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- BGMセクション -->
+  <div class="section">
+    <h2>2. BGM</h2>
+    <div class="upload-area" id="bgmUpload">
+      <div>クリックまたはドラッグ&ドロップでBGMファイルを選択</div>
+      <div style="margin-top: 5px; font-size: 0.9em; color: #888;">MP3, WAV対応（ループ再生されます）</div>
+      <input type="file" id="bgmFile" accept="audio/*">
+      <div class="file-name" id="bgmFileName"></div>
+    </div>
+  </div>
+
+  <!-- 出力設定 -->
+  <div class="section">
+    <h2>3. 出力</h2>
+    <div class="info-box">
+      <h3>処理の流れ</h3>
+      <ol style="margin: 0; padding-left: 20px;">
+        <li>BGMがフェードイン（3秒）</li>
+        <li>BGMのみ再生（3秒）</li>
+        <li>BGM音量が下がり、会話開始</li>
+        <li>会話中はBGMが小さくループ再生</li>
+        <li>会話終了後、BGM音量が上がる</li>
+        <li>BGMのみ再生（3秒）</li>
+        <li>BGMがフェードアウト（3秒）</li>
+      </ol>
+    </div>
+
+    <div class="controls" style="margin-top: 20px;">
+      <button id="previewBtn" disabled>プレビュー再生</button>
+      <button id="stopBtn" class="secondary" disabled>停止</button>
+      <button id="exportBtn" disabled>WAVで書き出し</button>
+    </div>
+
+    <div class="progress-bar" id="progressBar">
+      <div class="fill" id="progressFill"></div>
+    </div>
+
+    <div class="status" id="status"></div>
+  </div>
+
+  <script>
+    // 設定（固定値）
+    const CONFIG = {
+      fadeInDuration: 3,      // BGMフェードイン秒数
+      introDelay: 3,          // 会話開始前のBGMのみ秒数
+      duckingLevel: 0.15,     // ダッキング時のBGM音量（15%）
+      duckingTransition: 0.5, // ダッキング遷移時間
+      outroDelay: 3,          // 会話終了後のBGMのみ秒数
+      fadeOutDuration: 3,     // BGMフェードアウト秒数
+    };
+
+    // 状態管理
+    let audioContext = null;
+    let voiceBuffer = null;
+    let bgmBuffer = null;
+    let trimStart = 0;
+    let trimEnd = 1;
+    let zoomLevel = 1;
+    let isPlaying = false;
+    let isTrimPlaying = false;
+    let currentSources = [];
+    let trimPlaybackSource = null;
+    let playheadAnimationId = null;
+    let playStartTime = 0;
+    let playStartOffset = 0;
+
+    // DOM要素
+    const voiceUpload = document.getElementById('voiceUpload');
+    const voiceFile = document.getElementById('voiceFile');
+    const voiceFileName = document.getElementById('voiceFileName');
+    const bgmUpload = document.getElementById('bgmUpload');
+    const bgmFile = document.getElementById('bgmFile');
+    const bgmFileName = document.getElementById('bgmFileName');
+    const waveformContainer = document.getElementById('waveformContainer');
+    const waveformScroll = document.getElementById('waveformScroll');
+    const waveformWrapper = document.getElementById('waveformWrapper');
+    const waveformCanvas = document.getElementById('waveform');
+    const trimOverlay = document.getElementById('trimOverlay');
+    const trimRegion = document.getElementById('trimRegion');
+    const handleStart = document.getElementById('handleStart');
+    const handleEnd = document.getElementById('handleEnd');
+    const excludedLeft = document.getElementById('excludedLeft');
+    const excludedRight = document.getElementById('excludedRight');
+    const playhead = document.getElementById('playhead');
+    const seekOverlay = document.getElementById('seekOverlay');
+    const currentTimeDisplay = document.getElementById('currentTimeDisplay');
+    const zoomSlider = document.getElementById('zoomSlider');
+    const zoomValue = document.getElementById('zoomValue');
+    const trimStartTime = document.getElementById('trimStartTime');
+    const trimEndTime = document.getElementById('trimEndTime');
+    const trimDuration = document.getElementById('trimDuration');
+    const playTrimmedBtn = document.getElementById('playTrimmed');
+    const stopTrimmedBtn = document.getElementById('stopTrimmed');
+    const previewBtn = document.getElementById('previewBtn');
+    const stopBtn = document.getElementById('stopBtn');
+    const exportBtn = document.getElementById('exportBtn');
+    const statusDiv = document.getElementById('status');
+    const progressBar = document.getElementById('progressBar');
+    const progressFill = document.getElementById('progressFill');
+
+    // AudioContextの初期化
+    function getAudioContext() {
+      if (!audioContext) {
+        audioContext = new (window.AudioContext || window.webkitAudioContext)();
+      }
+      return audioContext;
+    }
+
+    // 時間フォーマット
+    function formatTime(seconds) {
+      const mins = Math.floor(seconds / 60);
+      const secs = (seconds % 60).toFixed(1);
+      return `${mins}:${secs.padStart(4, '0')}`;
+    }
+
+    // ステータス表示
+    function showStatus(message, type = 'processing') {
+      statusDiv.textContent = message;
+      statusDiv.className = `status visible ${type}`;
+    }
+
+    function hideStatus() {
+      statusDiv.className = 'status';
+    }
+
+    // ファイルアップロード処理
+    function setupUpload(uploadArea, fileInput, fileNameDiv, onLoad) {
+      uploadArea.addEventListener('click', () => fileInput.click());
+
+      uploadArea.addEventListener('dragover', (e) => {
+        e.preventDefault();
+        uploadArea.style.borderColor = '#00d9ff';
+      });
+
+      uploadArea.addEventListener('dragleave', () => {
+        uploadArea.style.borderColor = '';
+      });
+
+      uploadArea.addEventListener('drop', (e) => {
+        e.preventDefault();
+        uploadArea.style.borderColor = '';
+        const file = e.dataTransfer.files[0];
+        if (file) handleFile(file);
+      });
+
+      fileInput.addEventListener('change', (e) => {
+        const file = e.target.files[0];
+        if (file) handleFile(file);
+      });
+
+      async function handleFile(file) {
+        fileNameDiv.textContent = file.name;
+        uploadArea.classList.add('has-file');
+
+        try {
+          const arrayBuffer = await file.arrayBuffer();
+          const ctx = getAudioContext();
+          const buffer = await ctx.decodeAudioData(arrayBuffer);
+          onLoad(buffer, file.name);
+        } catch (error) {
+          showStatus('ファイルの読み込みに失敗しました: ' + error.message, 'error');
+          uploadArea.classList.remove('has-file');
+          fileNameDiv.textContent = '';
+        }
+      }
+    }
+
+    // 波形描画
+    function drawWaveform(buffer) {
+      const canvas = waveformCanvas;
+      const ctx = canvas.getContext('2d');
+      const dpr = window.devicePixelRatio || 1;
+
+      const containerWidth = waveformScroll.clientWidth;
+      const width = containerWidth * zoomLevel;
+      const height = 120;
+
+      // キャンバスとラッパーのサイズ設定
+      canvas.style.width = width + 'px';
+      canvas.style.height = height + 'px';
+      canvas.width = width * dpr;
+      canvas.height = height * dpr;
+      waveformWrapper.style.width = width + 'px';
+      ctx.scale(dpr, dpr);
+
+      const data = buffer.getChannelData(0);
+      const step = Math.ceil(data.length / width);
+
+      // 背景
+      ctx.fillStyle = '#0f3460';
+      ctx.fillRect(0, 0, width, height);
+
+      // 波形描画
+      ctx.beginPath();
+      ctx.strokeStyle = '#00d9ff';
+      ctx.lineWidth = 1;
+
+      for (let i = 0; i < width; i++) {
+        let min = 1.0;
+        let max = -1.0;
+        const startIdx = Math.floor(i * data.length / width);
+        const endIdx = Math.floor((i + 1) * data.length / width);
+
+        for (let j = startIdx; j < endIdx; j++) {
+          const datum = data[j];
+          if (datum < min) min = datum;
+          if (datum > max) max = datum;
+        }
+
+        const y1 = ((1 + min) / 2) * height;
+        const y2 = ((1 + max) / 2) * height;
+
+        ctx.moveTo(i, y1);
+        ctx.lineTo(i, y2);
+      }
+
+      ctx.stroke();
+
+      // タイムマーカー（秒ごと）
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.1)';
+      ctx.lineWidth = 1;
+      const duration = buffer.duration;
+      const pixelsPerSecond = width / duration;
+
+      for (let t = 1; t < duration; t++) {
+        const x = t * pixelsPerSecond;
+        ctx.beginPath();
+        ctx.moveTo(x, 0);
+        ctx.lineTo(x, height);
+        ctx.stroke();
+      }
+
+      // トリムオーバーレイを更新
+      updateTrimOverlay();
+    }
+
+    // トリムオーバーレイの更新
+    function updateTrimOverlay() {
+      if (!voiceBuffer) return;
+
+      const width = waveformWrapper.clientWidth;
+      const startX = trimStart * width;
+      const endX = trimEnd * width;
+
+      // ハンドル位置
+      handleStart.style.left = startX + 'px';
+      handleEnd.style.left = endX + 'px';
+
+      // トリミング範囲
+      trimRegion.style.left = startX + 'px';
+      trimRegion.style.width = (endX - startX) + 'px';
+
+      // 除外領域
+      excludedLeft.style.width = startX + 'px';
+      excludedRight.style.left = endX + 'px';
+      excludedRight.style.width = (width - endX) + 'px';
+    }
+
+    // ズーム処理
+    zoomSlider.addEventListener('input', (e) => {
+      zoomLevel = parseFloat(e.target.value);
+      zoomValue.textContent = zoomLevel + 'x';
+      if (voiceBuffer) {
+        drawWaveform(voiceBuffer);
+      }
+    });
+
+    // ハンドルドラッグ処理
+    let draggingHandle = null;
+
+    function setupHandleDrag(handle, isStart) {
+      handle.addEventListener('mousedown', (e) => {
+        e.preventDefault();
+        draggingHandle = isStart ? 'start' : 'end';
+        document.addEventListener('mousemove', onHandleMove);
+        document.addEventListener('mouseup', onHandleUp);
+      });
+
+      handle.addEventListener('touchstart', (e) => {
+        e.preventDefault();
+        draggingHandle = isStart ? 'start' : 'end';
+        document.addEventListener('touchmove', onHandleTouchMove);
+        document.addEventListener('touchend', onHandleUp);
+      });
+    }
+
+    function onHandleMove(e) {
+      if (!draggingHandle || !voiceBuffer) return;
+      const rect = waveformWrapper.getBoundingClientRect();
+      const x = e.clientX - rect.left;
+      const ratio = Math.max(0, Math.min(1, x / rect.width));
+
+      if (draggingHandle === 'start') {
+        trimStart = Math.min(ratio, trimEnd - 0.01);
+      } else {
+        trimEnd = Math.max(ratio, trimStart + 0.01);
+      }
+
+      updateTrimDisplay();
+      updateTrimOverlay();
+    }
+
+    function onHandleTouchMove(e) {
+      if (!draggingHandle || !voiceBuffer) return;
+      const touch = e.touches[0];
+      const rect = waveformWrapper.getBoundingClientRect();
+      const x = touch.clientX - rect.left;
+      const ratio = Math.max(0, Math.min(1, x / rect.width));
+
+      if (draggingHandle === 'start') {
+        trimStart = Math.min(ratio, trimEnd - 0.01);
+      } else {
+        trimEnd = Math.max(ratio, trimStart + 0.01);
+      }
+
+      updateTrimDisplay();
+      updateTrimOverlay();
+    }
+
+    function onHandleUp() {
+      draggingHandle = null;
+      document.removeEventListener('mousemove', onHandleMove);
+      document.removeEventListener('mouseup', onHandleUp);
+      document.removeEventListener('touchmove', onHandleTouchMove);
+      document.removeEventListener('touchend', onHandleUp);
+    }
+
+    setupHandleDrag(handleStart, true);
+    setupHandleDrag(handleEnd, false);
+
+
+    // 会話音声アップロード
+    setupUpload(voiceUpload, voiceFile, voiceFileName, (buffer, name) => {
+      voiceBuffer = buffer;
+      waveformContainer.classList.add('visible');
+      trimStart = 0;
+      trimEnd = 1;
+      zoomLevel = 1;
+      zoomSlider.value = 1;
+      zoomValue.textContent = '1x';
+      updateTrimDisplay();
+      drawWaveform(buffer);
+      updateButtons();
+      showStatus('会話音声を読み込みました', 'success');
+      setTimeout(hideStatus, 2000);
+    });
+
+    // BGMアップロード
+    setupUpload(bgmUpload, bgmFile, bgmFileName, (buffer, name) => {
+      bgmBuffer = buffer;
+      updateButtons();
+      showStatus('BGMを読み込みました', 'success');
+      setTimeout(hideStatus, 2000);
+    });
+
+    // トリミング表示更新
+    function updateTrimDisplay() {
+      if (!voiceBuffer) return;
+      const duration = voiceBuffer.duration;
+      const startSec = trimStart * duration;
+      const endSec = trimEnd * duration;
+      const trimmedDuration = endSec - startSec;
+
+      trimStartTime.textContent = formatTime(startSec);
+      trimEndTime.textContent = formatTime(endSec);
+      trimDuration.textContent = formatTime(trimmedDuration);
+    }
+
+    // ボタン状態更新
+    function updateButtons() {
+      const hasVoice = voiceBuffer !== null;
+      const hasBgm = bgmBuffer !== null;
+      const ready = hasVoice && hasBgm;
+
+      playTrimmedBtn.disabled = !hasVoice || isTrimPlaying;
+      stopTrimmedBtn.disabled = !isTrimPlaying;
+      previewBtn.disabled = !ready;
+      exportBtn.disabled = !ready;
+      stopBtn.disabled = !isPlaying;
+    }
+
+    // 再生停止
+    function stopPlayback() {
+      currentSources.forEach(source => {
+        try {
+          source.stop();
+        } catch (e) {}
+      });
+      currentSources = [];
+      isPlaying = false;
+      stopTrimPlayback();
+      updateButtons();
+    }
+
+    stopBtn.addEventListener('click', stopPlayback);
+
+    // トリミング再生停止
+    function stopTrimPlayback() {
+      if (trimPlaybackSource) {
+        try {
+          trimPlaybackSource.stop();
+        } catch (e) {}
+        trimPlaybackSource = null;
+      }
+      if (playheadAnimationId) {
+        cancelAnimationFrame(playheadAnimationId);
+        playheadAnimationId = null;
+      }
+      playhead.classList.remove('visible');
+      currentTimeDisplay.classList.remove('visible');
+      isTrimPlaying = false;
+      updateButtons();
+    }
+
+    // プレイヘッドアニメーション
+    function animatePlayhead() {
+      if (!isTrimPlaying || !voiceBuffer) return;
+
+      const ctx = getAudioContext();
+      const elapsed = ctx.currentTime - playStartTime;
+      const currentPos = playStartOffset + elapsed;
+      const duration = voiceBuffer.duration;
+      const endPos = trimEnd * duration;
+
+      if (currentPos >= endPos) {
+        stopTrimPlayback();
+        return;
+      }
+
+      const ratio = currentPos / duration;
+      const width = waveformWrapper.clientWidth;
+      playhead.style.left = (ratio * width) + 'px';
+
+      // 現在時間を表示
+      currentTimeDisplay.textContent = formatTime(currentPos);
+      currentTimeDisplay.classList.add('visible');
+
+      playheadAnimationId = requestAnimationFrame(animatePlayhead);
+    }
+
+    // 指定位置から再生開始
+    function playFromPosition(positionRatio) {
+      if (!voiceBuffer) return;
+
+      // トリミング範囲内にクランプ
+      const clampedRatio = Math.max(trimStart, Math.min(trimEnd, positionRatio));
+
+      // 他の再生を停止
+      currentSources.forEach(source => {
+        try { source.stop(); } catch (e) {}
+      });
+      currentSources = [];
+      isPlaying = false;
+      stopTrimPlayback();
+
+      const ctx = getAudioContext();
+      const source = ctx.createBufferSource();
+      source.buffer = voiceBuffer;
+      source.connect(ctx.destination);
+
+      const startSec = clampedRatio * voiceBuffer.duration;
+      const endSec = trimEnd * voiceBuffer.duration;
+      const durationSec = endSec - startSec;
+
+      if (durationSec <= 0) return;
+
+      playStartTime = ctx.currentTime;
+      playStartOffset = startSec;
+
+      source.start(0, startSec, durationSec);
+      trimPlaybackSource = source;
+      isTrimPlaying = true;
+
+      // プレイヘッド表示
+      playhead.classList.add('visible');
+      animatePlayhead();
+
+      updateButtons();
+
+      source.onended = () => {
+        stopTrimPlayback();
+      };
+    }
+
+    // シークオーバーレイのクリック処理
+    seekOverlay.addEventListener('click', (e) => {
+      if (!voiceBuffer) return;
+
+      // ハンドルドラッグ中は無視
+      if (draggingHandle) return;
+
+      const rect = waveformWrapper.getBoundingClientRect();
+      const x = e.clientX - rect.left;
+      const ratio = x / rect.width;
+
+      // Shiftキーを押しながらクリックでハンドル移動
+      if (e.shiftKey) {
+        const distToStart = Math.abs(ratio - trimStart);
+        const distToEnd = Math.abs(ratio - trimEnd);
+
+        if (distToStart < distToEnd) {
+          trimStart = Math.min(ratio, trimEnd - 0.01);
+        } else {
+          trimEnd = Math.max(ratio, trimStart + 0.01);
+        }
+
+        updateTrimDisplay();
+        updateTrimOverlay();
+        return;
+      }
+
+      // 通常クリックでシーク再生
+      playFromPosition(ratio);
+    });
+
+    // トリミング範囲再生
+    playTrimmedBtn.addEventListener('click', () => {
+      if (!voiceBuffer || isTrimPlaying) return;
+      playFromPosition(trimStart);
+    });
+
+    // トリミング再生停止ボタン
+    stopTrimmedBtn.addEventListener('click', () => {
+      stopTrimPlayback();
+    });
+
+    // トリミングされた音声を取得
+    function getTrimmedVoice() {
+      const ctx = getAudioContext();
+      const startSample = Math.floor(trimStart * voiceBuffer.length);
+      const endSample = Math.floor(trimEnd * voiceBuffer.length);
+      const length = endSample - startSample;
+
+      const trimmedBuffer = ctx.createBuffer(
+        voiceBuffer.numberOfChannels,
+        length,
+        voiceBuffer.sampleRate
+      );
+
+      for (let channel = 0; channel < voiceBuffer.numberOfChannels; channel++) {
+        const sourceData = voiceBuffer.getChannelData(channel);
+        const destData = trimmedBuffer.getChannelData(channel);
+        for (let i = 0; i < length; i++) {
+          destData[i] = sourceData[startSample + i];
+        }
+      }
+
+      return trimmedBuffer;
+    }
+
+    // プレビュー再生
+    previewBtn.addEventListener('click', () => {
+      if (!voiceBuffer || !bgmBuffer) return;
+      stopPlayback();
+
+      const ctx = getAudioContext();
+      const trimmedVoice = getTrimmedVoice();
+      const voiceDuration = trimmedVoice.duration;
+
+      // タイムライン計算
+      const bgmStart = 0;
+      const voiceStart = CONFIG.fadeInDuration + CONFIG.introDelay;
+      const voiceEnd = voiceStart + voiceDuration;
+      const totalDuration = voiceEnd + CONFIG.outroDelay + CONFIG.fadeOutDuration;
+
+      // BGMの必要なループ回数を計算
+      const bgmLoopCount = Math.ceil(totalDuration / bgmBuffer.duration) + 1;
+
+      // BGM再生（ループ）
+      const bgmGain = ctx.createGain();
+      bgmGain.connect(ctx.destination);
+
+      // フェードイン
+      bgmGain.gain.setValueAtTime(0, ctx.currentTime);
+      bgmGain.gain.linearRampToValueAtTime(1, ctx.currentTime + CONFIG.fadeInDuration);
+
+      // ダッキング開始
+      bgmGain.gain.setValueAtTime(1, ctx.currentTime + voiceStart - CONFIG.duckingTransition);
+      bgmGain.gain.linearRampToValueAtTime(CONFIG.duckingLevel, ctx.currentTime + voiceStart);
+
+      // ダッキング終了
+      bgmGain.gain.setValueAtTime(CONFIG.duckingLevel, ctx.currentTime + voiceEnd);
+      bgmGain.gain.linearRampToValueAtTime(1, ctx.currentTime + voiceEnd + CONFIG.duckingTransition);
+
+      // フェードアウト
+      const fadeOutStart = voiceEnd + CONFIG.outroDelay;
+      bgmGain.gain.setValueAtTime(1, ctx.currentTime + fadeOutStart);
+      bgmGain.gain.linearRampToValueAtTime(0, ctx.currentTime + totalDuration);
+
+      // BGMをループ再生
+      for (let i = 0; i < bgmLoopCount; i++) {
+        const bgmSource = ctx.createBufferSource();
+        bgmSource.buffer = bgmBuffer;
+        bgmSource.connect(bgmGain);
+        bgmSource.start(ctx.currentTime + i * bgmBuffer.duration);
+        currentSources.push(bgmSource);
+      }
+
+      // 会話音声再生
+      const voiceSource = ctx.createBufferSource();
+      voiceSource.buffer = trimmedVoice;
+      voiceSource.connect(ctx.destination);
+      voiceSource.start(ctx.currentTime + voiceStart);
+      currentSources.push(voiceSource);
+
+      isPlaying = true;
+      updateButtons();
+      showStatus('プレビュー再生中...', 'processing');
+
+      // 自動停止
+      setTimeout(() => {
+        stopPlayback();
+        hideStatus();
+      }, totalDuration * 1000 + 100);
+    });
+
+    // WAV書き出し
+    exportBtn.addEventListener('click', async () => {
+      if (!voiceBuffer || !bgmBuffer) return;
+
+      showStatus('WAVファイルを生成中...', 'processing');
+      progressBar.classList.add('visible');
+      progressFill.style.width = '0%';
+
+      try {
+        const trimmedVoice = getTrimmedVoice();
+        const voiceDuration = trimmedVoice.duration;
+
+        // タイムライン計算
+        const voiceStart = CONFIG.fadeInDuration + CONFIG.introDelay;
+        const voiceEnd = voiceStart + voiceDuration;
+        const totalDuration = voiceEnd + CONFIG.outroDelay + CONFIG.fadeOutDuration;
+
+        const sampleRate = voiceBuffer.sampleRate;
+        const numChannels = 2; // ステレオ出力
+        const totalSamples = Math.ceil(totalDuration * sampleRate);
+
+        // オフラインレンダリング
+        const offlineCtx = new OfflineAudioContext(numChannels, totalSamples, sampleRate);
+
+        // BGMの必要なループ回数
+        const bgmLoopCount = Math.ceil(totalDuration / bgmBuffer.duration) + 1;
+
+        // BGMゲイン設定
+        const bgmGain = offlineCtx.createGain();
+        bgmGain.connect(offlineCtx.destination);
+
+        // フェードイン
+        bgmGain.gain.setValueAtTime(0, 0);
+        bgmGain.gain.linearRampToValueAtTime(1, CONFIG.fadeInDuration);
+
+        // ダッキング
+        bgmGain.gain.setValueAtTime(1, voiceStart - CONFIG.duckingTransition);
+        bgmGain.gain.linearRampToValueAtTime(CONFIG.duckingLevel, voiceStart);
+        bgmGain.gain.setValueAtTime(CONFIG.duckingLevel, voiceEnd);
+        bgmGain.gain.linearRampToValueAtTime(1, voiceEnd + CONFIG.duckingTransition);
+
+        // フェードアウト
+        const fadeOutStart = voiceEnd + CONFIG.outroDelay;
+        bgmGain.gain.setValueAtTime(1, fadeOutStart);
+        bgmGain.gain.linearRampToValueAtTime(0, totalDuration);
+
+        // BGMソース
+        for (let i = 0; i < bgmLoopCount; i++) {
+          const bgmSource = offlineCtx.createBufferSource();
+          bgmSource.buffer = bgmBuffer;
+          bgmSource.connect(bgmGain);
+          bgmSource.start(i * bgmBuffer.duration);
+        }
+
+        // 会話ソース
+        const voiceSource = offlineCtx.createBufferSource();
+        voiceSource.buffer = trimmedVoice;
+        voiceSource.connect(offlineCtx.destination);
+        voiceSource.start(voiceStart);
+
+        progressFill.style.width = '30%';
+
+        // レンダリング
+        const renderedBuffer = await offlineCtx.startRendering();
+
+        progressFill.style.width = '60%';
+
+        // WAVエンコード
+        const wavBlob = encodeWAV(renderedBuffer);
+
+        progressFill.style.width = '90%';
+
+        // ダウンロード
+        const url = URL.createObjectURL(wavBlob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'podcast_output.wav';
+        a.click();
+        URL.revokeObjectURL(url);
+
+        progressFill.style.width = '100%';
+        showStatus('WAVファイルを保存しました', 'success');
+
+        setTimeout(() => {
+          progressBar.classList.remove('visible');
+          hideStatus();
+        }, 3000);
+
+      } catch (error) {
+        showStatus('書き出しに失敗しました: ' + error.message, 'error');
+        progressBar.classList.remove('visible');
+      }
+    });
+
+    // WAVエンコード
+    function encodeWAV(audioBuffer) {
+      const numChannels = audioBuffer.numberOfChannels;
+      const sampleRate = audioBuffer.sampleRate;
+      const format = 1; // PCM
+      const bitDepth = 16;
+
+      const bytesPerSample = bitDepth / 8;
+      const blockAlign = numChannels * bytesPerSample;
+
+      const samples = audioBuffer.length;
+      const dataSize = samples * blockAlign;
+      const buffer = new ArrayBuffer(44 + dataSize);
+      const view = new DataView(buffer);
+
+      // WAVヘッダー
+      writeString(view, 0, 'RIFF');
+      view.setUint32(4, 36 + dataSize, true);
+      writeString(view, 8, 'WAVE');
+      writeString(view, 12, 'fmt ');
+      view.setUint32(16, 16, true);
+      view.setUint16(20, format, true);
+      view.setUint16(22, numChannels, true);
+      view.setUint32(24, sampleRate, true);
+      view.setUint32(28, sampleRate * blockAlign, true);
+      view.setUint16(32, blockAlign, true);
+      view.setUint16(34, bitDepth, true);
+      writeString(view, 36, 'data');
+      view.setUint32(40, dataSize, true);
+
+      // オーディオデータ
+      const channels = [];
+      for (let i = 0; i < numChannels; i++) {
+        channels.push(audioBuffer.getChannelData(i));
+      }
+
+      let offset = 44;
+      for (let i = 0; i < samples; i++) {
+        for (let ch = 0; ch < numChannels; ch++) {
+          const sample = Math.max(-1, Math.min(1, channels[ch][i]));
+          const intSample = sample < 0 ? sample * 0x8000 : sample * 0x7FFF;
+          view.setInt16(offset, intSample, true);
+          offset += 2;
+        }
+      }
+
+      return new Blob([buffer], { type: 'audio/wav' });
+    }
+
+    function writeString(view, offset, string) {
+      for (let i = 0; i < string.length; i++) {
+        view.setUint8(offset + i, string.charCodeAt(i));
+      }
+    }
+
+    // ウィンドウリサイズ時に波形を再描画
+    let resizeTimeout;
+    window.addEventListener('resize', () => {
+      clearTimeout(resizeTimeout);
+      resizeTimeout = setTimeout(() => {
+        if (voiceBuffer) {
+          drawWaveform(voiceBuffer);
+        }
+      }, 100);
+    });
+
+    // 初期化
+    updateButtons();
+  </script>
+</body>
+</html>
