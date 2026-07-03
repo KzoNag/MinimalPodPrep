@@ -1,5 +1,10 @@
 # Minimal Pod Prep
 
+> **⚠️ このツールの開発は終了しました。**
+> 後継の [**MinimalPodStudio**](https://github.com/KzoNag/MinimalPodStudio) をご利用ください。
+> 編集機能（トリミング・BGMダッキング・書き出し）に加えて、収録（マイク+システム音声の2トラック録音）、文字起こし、説明文生成、Spotify投稿補助まで対応しています。
+> 公開版: https://kzonag.github.io/MinimalPodStudio/
+
 ブラウザだけで動作する単一ファイルのポッドキャスト編集ツールです。会話音声のトリミング、BGMのループ合成とダッキング、プレビュー再生、WAV/MP3書き出しに対応しています。
 
 ## 主な機能
